@@ -5,9 +5,34 @@ import plotly.express as px
 from scipy.optimize import linprog
 
 # ==============================================================================
-# 1. CALCULS MCDM
+# CONFIGURATION DE LA PAGE & STYLES CSS
 # ==============================================================================
+st.set_page_config(page_title="MCDM", layout="wide", initial_sidebar_state="collapsed")
 
+st.markdown("""
+<style>
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+        max-width: 1200px;
+    }
+    div[data-testid="stHorizontalBlock"] {
+        align-items: center;
+    }
+    .grid-header {
+        font-weight: 600;
+        font-size: 0.9rem;
+        color: #94a3b8;
+        padding-bottom: 8px;
+        border-bottom: 1px solid #334155;
+        margin-bottom: 12px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ==============================================================================
+# MOTEUR DE CALCUL
+# ==============================================================================
 SAATY_RI = {
     1: 0.0, 2: 0.0, 3: 0.58, 4: 0.90, 5: 1.12,
     6: 1.24, 7: 1.32, 8: 1.41, 9: 1.45, 10: 1.56
@@ -59,7 +84,7 @@ def compute_bwm(num_crit: int, best_idx: int, worst_idx: int, bo: np.ndarray, ow
 
     res = linprog(c=c, A_ub=np.array(A_ub), b_ub=np.array(b_ub), A_eq=A_eq, b_eq=b_eq, bounds=bounds, method="highs")
     if not res.success:
-        raise ValueError("Erreur de convergence BWM")
+        raise ValueError("Convergence non atteinte pour BWM.")
     return res.x[:num_crit], float(res.x[-1])
 
 def run_topsis(matrix: np.ndarray, weights: np.ndarray, crit_types: list):
@@ -96,39 +121,36 @@ def run_wsm(matrix: np.ndarray, weights: np.ndarray, crit_types: list):
     return np.dot(norm_mat, weights)
 
 # ==============================================================================
-# 2. INTERFACE UTILISATEUR
+# INTERFACE UTILISATEUR
 # ==============================================================================
 
-st.set_page_config(page_title="MCDM", layout="wide")
-st.title("Aide à la Décision Multicritère (MCDM)")
+st.title("Système MCDM")
+st.caption("Aide à la décision multicritère (AHP, BWM, TOPSIS, WSM)")
 
 # --- 1. CONFIGURATION ---
-st.header("1. Critères et Alternatives")
+with st.container(border=True):
+    st.subheader("1. Paramétrage")
+    col1, col2 = st.columns(2)
+    with col1:
+        crit_raw = st.text_input("Critères (séparés par virgules) :", "Coût, Confort, Sécurité")
+        criteria = [c.strip() for c in crit_raw.split(",") if c.strip()]
+    with col2:
+        alt_raw = st.text_input("Alternatives (séparées par virgules) :", "Voiture 1, Voiture 2, Voiture 3")
+        alternatives = [a.strip() for a in alt_raw.split(",") if a.strip()]
 
-c_crit, c_alt = st.columns(2)
-with c_crit:
-    crit_input = st.text_input("Critères (séparés par virgule) :", "Coût, Confort, Sécurité")
-    criteria = [c.strip() for c in crit_input.split(",") if c.strip()]
-with c_alt:
-    alt_input = st.text_input("Alternatives (séparées par virgule) :", "Option 1, Option 2, Option 3")
-    alternatives = [a.strip() for a in alt_input.split(",") if a.strip()]
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        method_weights = st.selectbox("Méthode de pondération des critères :", ["AHP", "BWM"])
+    with col_m2:
+        method_ranking = st.selectbox("Méthode de classement des alternatives :", ["AHP", "TOPSIS", "WSM"])
 
 num_crit = len(criteria)
 num_alt = len(alternatives)
 
 if num_crit < 2 or num_alt < 2:
-    st.warning("Il faut au minimum 2 critères et 2 alternatives.")
+    st.warning("Veuillez renseigner au moins 2 critères et 2 alternatives.")
     st.stop()
 
-col_m1, col_m2 = st.columns(2)
-with col_m1:
-    method_weights = st.selectbox("Méthode de pondération :", ["AHP", "BWM"])
-with col_m2:
-    method_ranking = st.selectbox("Méthode de classement :", ["AHP", "TOPSIS", "WSM"])
-
-st.markdown("---")
-
-# Échelle Saaty 1 à 9
 saaty_scale = {
     1: "1 - Égal",
     2: "2 - Intermédiaire",
@@ -141,163 +163,213 @@ saaty_scale = {
     9: "9 - Extrême"
 }
 
-# --- 2. PONDÉRATION DES CRITÈRES ---
-st.header(f"2. Pondération des critères ({method_weights})")
-
 crit_weights = None
 
-if method_weights == "AHP":
-    crit_matrix = np.ones((num_crit, num_crit))
-    for i in range(num_crit):
-        for j in range(i + 1, num_crit):
-            c_sel, c_val = st.columns([2, 1])
-            with c_sel:
-                fav = st.radio(
-                    f"Critère préféré :",
-                    [criteria[i], criteria[j]],
-                    key=f"w_crit_{i}_{j}"
-                )
-            with c_val:
-                val = st.selectbox(
-                    "Valeur (1-9) :",
-                    options=list(saaty_scale.keys()),
-                    format_func=lambda x: saaty_scale[x],
-                    key=f"w_val_{i}_{j}"
-                )
+# --- 2. PONDÉRATION DES CRITÈRES ---
+with st.container(border=True):
+    st.subheader(f"2. Pondération des critères ({method_weights})")
 
-            if fav == criteria[i]:
-                crit_matrix[i, j] = val
-                crit_matrix[j, i] = 1.0 / val
-            else:
-                crit_matrix[i, j] = 1.0 / val
-                crit_matrix[j, i] = val
+    if method_weights == "AHP":
+        # En-têtes de colonnes
+        h1, h2, h3 = st.columns([3, 4, 3])
+        h1.markdown("<div class='grid-header'>Paire de critères</div>", unsafe_allow_html=True)
+        h2.markdown("<div class='grid-header'>Critère dominant</div>", unsafe_allow_html=True)
+        h3.markdown("<div class='grid-header'>Intensité (1 à 9)</div>", unsafe_allow_html=True)
 
-    weights, ci, cr, is_consistent = compute_ahp(crit_matrix)
-    crit_weights = weights
+        crit_matrix = np.ones((num_crit, num_crit))
 
-    res1, res2, res3 = st.columns(3)
-    res1.metric("CI", f"{ci:.4f}")
-    res2.metric("CR", f"{cr:.4f}")
-    res3.metric("Cohérence", "Validée (CR < 0.1)" if is_consistent else "Incohérente (CR ≥ 0.1)")
+        for i in range(num_crit):
+            for j in range(i + 1, num_crit):
+                c_pair, c_fav, c_deg = st.columns([3, 4, 3])
+                with c_pair:
+                    st.write(f"**{criteria[i]}** vs **{criteria[j]}**")
+                with c_fav:
+                    fav = st.radio(
+                        f"fav_{i}_{j}",
+                        [criteria[i], criteria[j]],
+                        horizontal=True,
+                        label_visibility="collapsed",
+                        key=f"ahp_fav_{i}_{j}"
+                    )
+                with c_deg:
+                    val = st.selectbox(
+                        f"val_{i}_{j}",
+                        options=list(saaty_scale.keys()),
+                        format_func=lambda x: saaty_scale[x],
+                        label_visibility="collapsed",
+                        key=f"ahp_val_{i}_{j}"
+                    )
 
-elif method_weights == "BWM":
-    col_b, col_w = st.columns(2)
-    with col_b:
-        best_crit = st.selectbox("Meilleur critère (Best) :", criteria, index=0)
-    with col_w:
-        worst_crit = st.selectbox("Pire critère (Worst) :", criteria, index=num_crit - 1)
+                if fav == criteria[i]:
+                    crit_matrix[i, j] = val
+                    crit_matrix[j, i] = 1.0 / val
+                else:
+                    crit_matrix[i, j] = 1.0 / val
+                    crit_matrix[j, i] = val
 
-    if best_crit == worst_crit:
-        st.error("Le meilleur et le pire critère doivent être différents.")
-        st.stop()
+        weights, ci, cr, is_consistent = compute_ahp(crit_matrix)
+        crit_weights = weights
 
-    b_idx = criteria.index(best_crit)
-    w_idx = criteria.index(worst_crit)
+        st.write("")
+        with st.container(border=True):
+            m1, m2, m3 = st.columns(3)
+            m1.metric("CI (Indice de cohérence)", f"{ci:.4f}")
+            m2.metric("CR (Ratio de cohérence)", f"{cr:.4f}")
+            m3.metric("Cohérence globale", "Validée (CR < 0.1)" if is_consistent else "Incohérente (CR ≥ 0.1)")
 
-    st.write(f"**Comparaison Best-to-Others (BO) : importance de [{best_crit}] par rapport aux autres**")
-    bo_vec = np.ones(num_crit)
-    for j in range(num_crit):
-        if j != b_idx:
-            bo_vec[j] = st.slider(f"[{best_crit}] vs [{criteria[j]}] :", 1, 9, 3, key=f"bo_{j}")
+    elif method_weights == "BWM":
+        c_b, c_w = st.columns(2)
+        with c_b:
+            best_c = st.selectbox("Critère le plus important (Best) :", criteria, index=0)
+        with c_w:
+            worst_c = st.selectbox("Critère le moins important (Worst) :", criteria, index=num_crit - 1)
 
-    st.write(f"**Comparaison Others-to-Worst (OW) : importance des critères par rapport à [{worst_crit}]**")
-    ow_vec = np.ones(num_crit)
-    for j in range(num_crit):
-        if j != w_idx:
-            ow_vec[j] = st.slider(f"[{criteria[j]}] vs [{worst_crit}] :", 1, 9, 3, key=f"ow_{j}")
+        if best_c == worst_c:
+            st.error("Le meilleur critère et le pire critère doivent être distincts.")
+            st.stop()
 
-    weights, xi = compute_bwm(num_crit, b_idx, w_idx, bo_vec, ow_vec)
-    crit_weights = weights
-    st.metric("Indice d'incohérence ξ*", f"{xi:.4f}")
+        b_idx = criteria.index(best_c)
+        w_idx = criteria.index(worst_c)
 
-# Tableau des poids calculés
-df_w = pd.DataFrame({"Critère": criteria, "Poids": crit_weights})
-st.dataframe(df_w.set_index("Critère").T.style.format("{:.4f}"), use_container_width=True)
+        st.write(f"**Comparaisons par rapport au meilleur critère ({best_c}) :**")
+        bo_vec = np.ones(num_crit)
+        for j in range(num_crit):
+            if j != b_idx:
+                c1, c2 = st.columns([3, 7])
+                c1.write(f"**{best_c}** vs **{criteria[j]}**")
+                bo_vec[j] = c2.slider(f"bo_{j}", 1, 9, 3, label_visibility="collapsed", key=f"bo_{j}")
 
-st.markdown("---")
+        st.write(f"**Comparaisons par rapport au pire critère ({worst_c}) :**")
+        ow_vec = np.ones(num_crit)
+        for j in range(num_crit):
+            if j != w_idx:
+                c1, c2 = st.columns([3, 7])
+                c1.write(f"**{criteria[j]}** vs **{worst_c}**")
+                ow_vec[j] = c2.slider(f"ow_{j}", 1, 9, 3, label_visibility="collapsed", key=f"ow_{j}")
 
-# --- 3. QUESTIONNAIRE ALTERNATIVES ---
-st.header(f"3. Évaluation des alternatives ({method_ranking})")
+        weights, xi = compute_bwm(num_crit, b_idx, w_idx, bo_vec, ow_vec)
+        crit_weights = weights
 
-if method_ranking == "AHP":
-    local_priorities = np.zeros((num_alt, num_crit))
+        with st.container(border=True):
+            st.metric("Indice d'incohérence optimal (ξ*)", f"{xi:.4f}")
 
-    for k, crit_name in enumerate(criteria):
-        with st.expander(f"Critère : {crit_name}", expanded=(k == 0)):
-            mat_alt = np.ones((num_alt, num_alt))
-            for i in range(num_alt):
-                for j in range(i + 1, num_alt):
-                    col_p, col_v = st.columns([2, 1])
-                    with col_p:
-                        fav_alt = st.radio(
-                            f"Meilleure option :",
+    # Restitution graphique des poids
+    st.write("")
+    c_chart, c_tbl = st.columns([3, 2])
+    df_w = pd.DataFrame({"Critère": criteria, "Poids": crit_weights})
+    with c_chart:
+        fig_w = px.bar(df_w, x="Critère", y="Poids", text_auto=".3f", title="Distribution des poids")
+        fig_w.update_layout(height=280, margin=dict(l=20, r=20, t=40, b=20))
+        st.plotly_chart(fig_w, use_container_width=True)
+    with c_tbl:
+        st.write("**Valeurs exactes des poids :**")
+        st.dataframe(
+            df_w.style.format({"Poids": "{:.4f}"}),
+            use_container_width=True,
+            hide_index=True,
+            height=240
+        )
+
+# --- 3. ÉVALUATION ET CLASSEMENT ---
+with st.container(border=True):
+    st.subheader(f"3. Évaluation des alternatives ({method_ranking})")
+
+    if method_ranking == "AHP":
+        st.write("Comparaison deux à deux des alternatives pour chaque critère :")
+        local_priorities = np.zeros((num_alt, num_crit))
+
+        for k, crit_name in enumerate(criteria):
+            with st.expander(f"Critère : {crit_name}", expanded=(k == 0)):
+                h1, h2, h3 = st.columns([3, 4, 3])
+                h1.markdown("<div class='grid-header'>Paire d'alternatives</div>", unsafe_allow_html=True)
+                h2.markdown("<div class='grid-header'>Option préférée</div>", unsafe_allow_html=True)
+                h3.markdown("<div class='grid-header'>Intensité (1 à 9)</div>", unsafe_allow_html=True)
+
+                mat_alt = np.ones((num_alt, num_alt))
+                for i in range(num_alt):
+                    for j in range(i + 1, num_alt):
+                        c_p, c_f, c_d = st.columns([3, 4, 3])
+                        c_p.write(f"**{alternatives[i]}** vs **{alternatives[j]}**")
+                        fav_a = c_f.radio(
+                            f"fav_a_{k}_{i}_{j}",
                             [alternatives[i], alternatives[j]],
-                            key=f"alt_{k}_{i}_{j}"
+                            horizontal=True,
+                            label_visibility="collapsed",
+                            key=f"alt_fav_{k}_{i}_{j}"
                         )
-                    with col_v:
-                        deg_alt = st.selectbox(
-                            "Valeur (1-9) :",
+                        val_a = c_d.selectbox(
+                            f"val_a_{k}_{i}_{j}",
                             options=list(saaty_scale.keys()),
                             format_func=lambda x: saaty_scale[x],
-                            key=f"alt_deg_{k}_{i}_{j}"
+                            label_visibility="collapsed",
+                            key=f"alt_val_{k}_{i}_{j}"
                         )
 
-                    if fav_alt == alternatives[i]:
-                        mat_alt[i, j] = deg_alt
-                        mat_alt[j, i] = 1.0 / deg_alt
-                    else:
-                        mat_alt[i, j] = 1.0 / deg_alt
-                        mat_alt[j, i] = deg_alt
+                        if fav_a == alternatives[i]:
+                            mat_alt[i, j] = val_a
+                            mat_alt[j, i] = 1.0 / val_a
+                        else:
+                            mat_alt[i, j] = 1.0 / val_a
+                            mat_alt[j, i] = val_a
 
-            p_loc, _, cr_a, _ = compute_ahp(mat_alt)
-            local_priorities[:, k] = p_loc
-            st.caption(f"CR ({crit_name}) = {cr_a:.4f}")
+                p_loc, _, cr_a, _ = compute_ahp(mat_alt)
+                local_priorities[:, k] = p_loc
+                st.caption(f"Ratio de cohérence locale (CR) = {cr_a:.4f}")
 
-    if st.button("Calculer le classement final"):
-        final_scores = np.dot(local_priorities, crit_weights)
-        df_res = pd.DataFrame({"Alternative": alternatives, "Score AHP": final_scores})
-        df_res = df_res.sort_values(by="Score AHP", ascending=False).reset_index(drop=True)
-        df_res["Rang"] = df_res.index + 1
+        if st.button("Calculer le classement final (AHP)", type="primary"):
+            final_scores = np.dot(local_priorities, crit_weights)
+            df_res = pd.DataFrame({"Alternative": alternatives, "Score AHP": final_scores})
+            df_res = df_res.sort_values(by="Score AHP", ascending=False).reset_index(drop=True)
+            df_res["Rang"] = df_res.index + 1
 
-        st.subheader("Classement Final")
-        st.dataframe(df_res[["Rang", "Alternative", "Score AHP"]].style.format({"Score AHP": "{:.4f}"}), use_container_width=True)
+            st.write("---")
+            c_r1, c_r2 = st.columns([3, 2])
+            with c_r1:
+                fig_r = px.bar(df_res, x="Alternative", y="Score AHP", text_auto=".4f", title="Classement AHP", color="Score AHP")
+                fig_r.update_layout(height=300, margin=dict(l=20, r=20, t=40, b=20))
+                st.plotly_chart(fig_r, use_container_width=True)
+            with c_r2:
+                st.write("**Résultats finaux :**")
+                st.dataframe(df_res[["Rang", "Alternative", "Score AHP"]].style.format({"Score AHP": "{:.4f}"}), use_container_width=True, hide_index=True)
 
-        fig = px.bar(df_res, x="Alternative", y="Score AHP", color="Alternative", text_auto=".4f")
-        st.plotly_chart(fig, use_container_width=True)
+    else:
+        # TOPSIS / WSM
+        st.write("**Définition des sens d'optimisation :**")
+        crit_types = []
+        t_cols = st.columns(num_crit)
+        for idx, c in enumerate(t_cols):
+            with c:
+                t = st.selectbox(f"{criteria[idx]} :", ["Bénéfice (+)", "Coût (-)"], key=f"t_{idx}")
+                crit_types.append(t)
 
-else:
-    # TOPSIS ou WSM
-    st.write("**Type de critère :**")
-    crit_types = []
-    type_cols = st.columns(num_crit)
-    for idx, c in enumerate(type_cols):
-        with c:
-            t = st.selectbox(criteria[idx], ["Bénéfice (+)", "Coût (-)"], key=f"t_{idx}")
-            crit_types.append(t)
+        st.write("**Notation des alternatives (Échelle de performance 1 à 9) :**")
+        score_matrix = np.zeros((num_alt, num_crit))
 
-    score_matrix = np.zeros((num_alt, num_crit))
+        for i, alt in enumerate(alternatives):
+            with st.expander(f"Alternative : {alt}", expanded=True):
+                eval_cols = st.columns(num_crit)
+                for j, crit in enumerate(criteria):
+                    with eval_cols[j]:
+                        score_matrix[i, j] = st.slider(f"{crit} :", 1, 9, 5, key=f"eval_{i}_{j}")
 
-    for i, alt in enumerate(alternatives):
-        with st.expander(f"Alternative : {alt}", expanded=True):
-            eval_cols = st.columns(num_crit)
-            for j, crit in enumerate(criteria):
-                with eval_cols[j]:
-                    score_matrix[i, j] = st.slider(f"{crit} (1-9) :", 1, 9, 5, key=f"eval_{i}_{j}")
+        if st.button(f"Calculer le classement ({method_ranking})", type="primary"):
+            if method_ranking == "TOPSIS":
+                scores = run_topsis(score_matrix, crit_weights, crit_types)
+                score_col = "Score TOPSIS (RC*)"
+            else:
+                scores = run_wsm(score_matrix, crit_weights, crit_types)
+                score_col = "Score WSM"
 
-    if st.button("Calculer le classement final"):
-        if method_ranking == "TOPSIS":
-            scores = run_topsis(score_matrix, crit_weights, crit_types)
-            col_name = "Score TOPSIS (RC*)"
-        else:
-            scores = run_wsm(score_matrix, crit_weights, crit_types)
-            col_name = "Score WSM"
+            df_res = pd.DataFrame({"Alternative": alternatives, score_col: scores})
+            df_res = df_res.sort_values(by=score_col, ascending=False).reset_index(drop=True)
+            df_res["Rang"] = df_res.index + 1
 
-        df_res = pd.DataFrame({"Alternative": alternatives, col_name: scores})
-        df_res = df_res.sort_values(by=col_name, ascending=False).reset_index(drop=True)
-        df_res["Rang"] = df_res.index + 1
-
-        st.subheader("Classement Final")
-        st.dataframe(df_res[["Rang", "Alternative", col_name]].style.format({col_name: "{:.4f}"}), use_container_width=True)
-
-        fig = px.bar(df_res, x="Alternative", y=col_name, color="Alternative", text_auto=".4f")
-        st.plotly_chart(fig, use_container_width=True)
+            st.write("---")
+            c_r1, c_r2 = st.columns([3, 2])
+            with c_r1:
+                fig_r = px.bar(df_res, x="Alternative", y=score_col, text_auto=".4f", title=f"Classement ({method_ranking})", color=score_col)
+                fig_r.update_layout(height=300, margin=dict(l=20, r=20, t=40, b=20))
+                st.plotly_chart(fig_r, use_container_width=True)
+            with c_r2:
+                st.write("**Résultats finaux :**")
+                st.dataframe(df_res[["Rang", "Alternative", score_col]].style.format({score_col: "{:.4f}"}), use_container_width=True, hide_index=True)
