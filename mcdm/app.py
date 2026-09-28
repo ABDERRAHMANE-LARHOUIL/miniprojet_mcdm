@@ -141,12 +141,15 @@ st.header("2. Questionnaire de pondération des critères")
 
 saaty_options = {
     1: "1 - Importance égale",
+    2: "2 - Égale à modérément plus important (intermédiaire)",
     3: "3 - Modérément plus important",
+    4: "4 - Modérément à fortement plus important (intermédiaire)",
     5: "5 - Fortement plus important",
+    6: "6 - Fortement à très fortement plus important (intermédiaire)",
     7: "7 - Très fortement plus important",
+    8: "8 - Très fortement à extrêmement plus important (intermédiaire)",
     9: "9 - Extrêmement plus important"
 }
-
 crit_weights = None
 
 if eval_strategy.startswith("AHP Hiérarchique"):
